@@ -613,7 +613,7 @@ void EigenSolver::EPRPostPrinter::AddMeasurementQ(double eigen_print_idx,
   double E_cap = post_op.GetLumpedCapacitorEnergy();
   double E_m = E_elec + E_cap;
 
-  port_EPR.table["idx"] << eigen_print_idx;
+  port_Q.table["idx"] << eigen_print_idx;
   for (const auto idx : ports_with_R)
   {
     double Kl = post_op.GetExternalKappa(idx, E_m);
