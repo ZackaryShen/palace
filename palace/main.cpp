@@ -7,19 +7,22 @@
 #include <vector>
 #include <mpi.h>
 #include <mfem.hpp>
+
+// szb 20241221 comment: 目前Palace仅支持Driven、Eigen、静电静磁、瞬态场求解器
 #include "drivers/drivensolver.hpp"
 #include "drivers/eigensolver.hpp"
 #include "drivers/electrostaticsolver.hpp"
 #include "drivers/magnetostaticsolver.hpp"
 #include "drivers/transientsolver.hpp"
+
 #include "fem/errorindicator.hpp"
 #include "fem/libceed/ceed.hpp"
-#include "fem/mesh.hpp"
-#include "linalg/hypre.hpp"
+#include "fem/mesh.hpp"                         // szb 20241221 comment: 网格剖分模块
+#include "linalg/hypre.hpp"                     // szb 20241221 comment: 两个线性求解器的模块
 #include "linalg/slepc.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
-#include "utils/iodata.hpp"
+#include "utils/iodata.hpp"                     // szb 20241221 comment: IO数据结构？
 #include "utils/omp.hpp"
 #include "utils/timer.hpp"
 
@@ -29,6 +32,7 @@
 
 using namespace palace;
 
+// szb 20241221 comment: 获取Palace的Git Tag
 static const char *GetPalaceGitTag()
 {
 #if defined(PALACE_GIT_COMMIT)
@@ -39,6 +43,10 @@ static const char *GetPalaceGitTag()
   return commit;
 }
 
+// szb 20241221 comment: 获取LibCeed的Jit源码，Jit是
+// libCEED是一个用于高效可扩展离散化的库，它提供了快速的元素级代数运算
+// 在libCEED的上下文中，JIT通常指的是在运行时动态编译代码以优化性能。
+// libCEED支持多种后端，包括CPU和GPU，并且可以利用JIT编译来为特定的硬件配置生成优化的代码
 static const char *GetPalaceCeedJitSourceDir()
 {
 #if defined(PALACE_LIBCEED_JIT_SOURCE)
@@ -202,7 +210,7 @@ int main(int argc, char *argv[])
   Mpi::default_thread_required = MPI_THREAD_MULTIPLE;
 #endif
   Mpi::Init(argc, argv);
-  MPI_Comm world_comm = Mpi::World();
+  MPI_Comm world_comm = Mpi::World();           // szb 20241221 comment: 这个我还没用过，可以理解一下
   bool world_root = Mpi::Root(world_comm);
   int world_size = Mpi::Size(world_comm);
   Mpi::Print(world_comm, "\n");
@@ -211,6 +219,8 @@ int main(int argc, char *argv[])
   BlockTimer bt(Timer::INIT);
 
   // Parse command-line options.
+  // szb 20241221 comment: string_view是C++17引入的特性，用于给string一个视图（类似引用）
+  // 用于轻量化地读取而不修改字符串，需要给出字符串的地址和长度来初始化
   std::vector<std::string_view> argv_sv(argv, argv + argc);
   bool dryrun = false;
   auto Help = [executable_path = argv_sv[0], &world_comm]()
@@ -222,6 +232,8 @@ int main(int argc, char *argv[])
                "  -dry-run, --dry-run  Parse configuration file for errors and exit\n\n",
                executable_path.substr(executable_path.find_last_of('/') + 1));
   };
+
+  // szb 20241221 comment: 处理args
   for (int i = 1; i < argc; i++)
   {
     std::string_view argv_i = argv_sv.at(i);
@@ -244,10 +256,13 @@ int main(int argc, char *argv[])
   }
 
   // Perform dry run: Parse configuration file for errors and exit.
+  // szb 20241221 comment: dryrun的作用只是检查一下配置文件是否有error，之后直接return
   if (dryrun)
   {
     if (Mpi::Root(world_comm))
     {
+      // szb 20241221 comment: 该构造函数会将json文件尝试解析成json的集合
+      // 然后尝试SetUp几个模块，最终检查配置文件的正确性，有错会throw
       IoData iodata(argv[argc - 1], false);
     }
     Mpi::Print(world_comm, "Dry-run: No errors detected in configuration file \"{}\"\n\n",
@@ -261,6 +276,7 @@ int main(int argc, char *argv[])
 
   // Initialize the MFEM device and configure libCEED backend.
   int omp_threads = ConfigureOmp(), ngpu = GetDeviceCount();
+  // szb 20241221 comment: 可以看到，iodata是定义了几个模块的对象的
   mfem::Device device(ConfigureDevice(iodata.solver.device), GetDeviceId(world_comm, ngpu));
   ConfigureCeedBackend(iodata.solver.ceed_backend);
 #if defined(HYPRE_WITH_GPU_AWARE_MPI)
@@ -280,6 +296,10 @@ int main(int argc, char *argv[])
 
   // Initialize the problem driver.
   PrintPalaceInfo(world_comm, world_size, omp_threads, ngpu, device);
+
+  // szb 20241221 comment: 使用lambda函数来完成工厂的对象返回（可以看到这里，所有的
+  // Solver都是继承自一个BaseSolver的）
+  // TODO：这里是否能通过template来改进？
   const auto solver = [&]() -> std::unique_ptr<BaseSolver>
   {
     switch (iodata.problem.type)
@@ -307,6 +327,8 @@ int main(int argc, char *argv[])
   // it and the input parameters.
   std::vector<std::unique_ptr<Mesh>> mesh;
   {
+    // szb 20241221 comment: 要去探究这里的网格数据是什么？在push什么
+    // szb 20241221 comment: Palace里的网格使用的是mfem的网格结构
     std::vector<std::unique_ptr<mfem::ParMesh>> mfem_mesh;
     mfem_mesh.push_back(mesh::ReadMesh(world_comm, iodata));
     iodata.NondimensionalizeInputs(*mfem_mesh[0]);
@@ -318,6 +340,7 @@ int main(int argc, char *argv[])
   }
 
   // Run the problem driver.
+  // szb 20241221 comment: TODO：这里是什么意思？待查证
   solver->SolveEstimateMarkRefine(mesh);
 
   // Print timing summary.
